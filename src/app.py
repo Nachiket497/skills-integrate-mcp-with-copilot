@@ -5,22 +5,82 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
-              description="API for viewing and signing up for extracurricular activities")
+              description="API for viewing and signing up for extracurricular activities, with user authentication.")
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+
+# In-memory user database (email as username)
+users_db = {
+    "emma@mergington.edu": {
+        "name": "Emma",
+        "grade": "11",
+        "hashed_password": pwd_context.hash("password123")
+    },
+    "teacher@mergington.edu": {
+        "name": "Mr. Smith",
+        "grade": "Teacher",
+        "hashed_password": pwd_context.hash("teachpass")
+    }
+}
+
 # In-memory activity database
 activities = {
+
+# User authentication helpers
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def authenticate_user(email: str, password: str):
+    user = users_db.get(email)
+    if not user:
+        return False
+    if not verify_password(password, user["hashed_password"]):
+        return False
+    return user
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    user = users_db.get(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+    return user
+
+# User registration endpoint
+@app.post("/register")
+def register_user(email: str, name: str, grade: str, password: str):
+    if email in users_db:
+        raise HTTPException(status_code=400, detail="User already exists")
+    hashed_password = pwd_context.hash(password)
+    users_db[email] = {"name": name, "grade": grade, "hashed_password": hashed_password}
+    return {"message": f"User {email} registered successfully"}
+
+# Token endpoint for login
+@app.post("/token")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=400, detail="Incorrect email or password")
+    # For demo, use email as token
+    return {"access_token": form_data.username, "token_type": "bearer"}
+
+# Get current user info
+@app.get("/me")
+def get_me(current_user: dict = Depends(get_current_user)):
+    return {"email": [k for k, v in users_db.items() if v == current_user][0], "name": current_user["name"], "grade": current_user["grade"]}
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
         "schedule": "Fridays, 3:30 PM - 5:00 PM",
